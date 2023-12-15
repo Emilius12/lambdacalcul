@@ -147,6 +147,11 @@ let rec faiblement_normalisable (x:terme) =
   in
 
   parcours_backtracking x;;
+  
+  
+
+
+  
 
 
 

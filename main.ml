@@ -58,14 +58,21 @@ let beta_red (x:terme) = (* applique une beta reduction *)
                       | _ -> failwith "erreur non évaluée")
   else x
 
-
-let rec print_terme (x:terme) = match x with
+let print_terme x =
+  print_newline ();
+  let rec print_terme (x:terme) = match x with
     | V(Var c) -> Printf.printf "%c" c
-    | App(y,z) -> print_terme y;
+    | App(y,z) -> Printf.printf "(";
+                  print_terme y;
+                  Printf.printf ")(";
                   print_terme z;
-    | Lamb(Var c,y) -> Printf.printf "(λ%c." c;
-                       print_terme y;
-                       Printf.printf ")"
+                  Printf.printf ")";
+    | Lamb(Var c,App(y,z)) -> Printf.printf "λ%c." c;
+                              print_terme y;
+                              print_terme z
+    | Lamb(Var c,y) -> Printf.printf "λ%c." c;
+                       print_terme y
+  in print_terme x
 
 
 let rec normalisation_gauche (x:terme) = (* normalise un terme jusqu'à ne plus avoir de redex *)
@@ -77,3 +84,73 @@ let rec normalisation_gauche (x:terme) = (* normalise un terme jusqu'à ne plus 
     if new_x = x then x
     else normalisation_gauche (beta_red x))
 
+
+let rec cnt_redex = function (* compte le nombre de redex dans le terme *)
+    | V(Var c) -> 0
+    | App(Lamb(Var _,y),z) -> 1 + cnt_redex y + cnt_redex z
+    | App(y,z) -> cnt_redex y + cnt_redex z
+    | Lamb(Var c,y) -> cnt_redex y
+
+
+let rec fortement_normalisable (x:terme) =
+(* Stratégie: on fait du backtracking sur les possibilités de réduction *)
+(* on construit d'abord le terme correspondant à la beta reduction du i-ème redex *)
+  let rec parcours_terme (x:terme) (cnt:int) = match x with
+      | App(Lamb(Var _,y),z) when cnt=0 -> x, beta_red x
+      | App(Lamb(Var c,y),z) -> if cnt<=(cnt_redex y) then x, App(Lamb(Var c,snd (parcours_terme y (cnt-1))),z) else x, App(Lamb(Var c,y),snd (parcours_terme z (cnt-1)))
+      | _ -> x,x
+  in
+
+(* on évalue ensuite pour chaque possibilité (backtracking) que toute normalisation retombe sur une forme normale *)
+  let rec parcours_backtracking (x:terme) =
+    if cnt_redex x = 0 then true
+    else (match x with
+            | App(Lamb(Var _,_),_) -> let l = List.init (cnt_redex x) (fun i -> parcours_terme x i)  in
+                                      List.fold_left (fun m x -> not (fst x = snd x && is_redex (fst x)) && parcours_backtracking (snd x) && m) true l(* on vérifie qu'on n'a pas de point fixe suite à une beta-reduction, sinon boucle pour une normalisation, puis on avance tant qu'il existe plus d'un redex *)
+            | _ -> true)
+  in
+
+  parcours_backtracking x
+
+
+(* tests forte normalisation *)
+
+(* let exemple1 = App(Lamb(Var 'x',App(V(Var 'x'),V(Var 'x'))),Lamb(Var 'x',App(V(Var 'x'),V(Var 'x')))) *)
+(* let repr1 = print_terme exemple1 *)
+(* let norm1 = fortement_normalisable exemple1 *)
+
+(* let exemple2 = App(Lamb(Var 'u',Lamb(Var 'z',V(Var 'u'))),App(Lamb(Var 't',V(Var 't')),Lamb(Var 'x',App(V(Var 'x'),V(Var 'x'))))) *)
+(* let repr2 = print_terme exemple2 *)
+(* let norm2 = fortement_normalisable exemple2 *)
+
+(* let exemple3 = App(Lamb(Var 'u',Lamb(Var 'z',V(Var 'u'))),App(Lamb(Var 'x',App(V(Var 'x'),V(Var 'x'))),Lamb(Var 'x',App(V(Var 'x'),V(Var 'x'))))) *)
+(* let repr3 = print_terme exemple3 *)
+(* let norm3 = fortement_normalisable exemple3 *)
+
+
+let rec faiblement_normalisable (x:terme) =
+(* Stratégie: on fait du backtracking sur les possibilités de réduction *)
+(* on construit d'abord le terme correspondant à la beta reduction du i-ème redex *)
+  let rec parcours_terme (x:terme) (cnt:int) = match x with
+      | App(Lamb(Var _,y),z) when cnt=0 -> x, beta_red x
+      | App(Lamb(Var c,y),z) -> if cnt<=(cnt_redex y) then x, App(Lamb(Var c,snd (parcours_terme y (cnt-1))),z) else x, App(Lamb(Var c,y),snd (parcours_terme z (cnt-1)))
+      | _ -> x,x
+  in
+
+(* on évalue ensuite pour chaque possibilité (backtracking) qu'une normalisation retombe sur une forme normale *)
+  let rec parcours_backtracking (x:terme) =
+    if cnt_redex x = 0 then true
+    else (match x with
+            | App(Lamb(Var _,_),_) -> let l = List.init (cnt_redex x) (fun i -> parcours_terme x i)  in
+                                      List.fold_left (fun m x -> (not (fst x = snd x && is_redex (fst x)) && parcours_backtracking (snd x)) || m) false l(* on vérifie qu'on n'a pas de point fixe suite à une beta-reduction, sinon boucle pour une normalisation, et on regarde si on a un candidat *)
+            | _ -> true)
+  in
+
+  parcours_backtracking x
+
+
+(* tests faible normalisation *)
+
+(* let exemple3 = App(Lamb(Var 'u',Lamb(Var 'z',V(Var 'u'))),App(Lamb(Var 'x',App(V(Var 'x'),V(Var 'x'))),Lamb(Var 'x',App(V(Var 'x'),V(Var 'x'))))) *)
+(* let repr3 = print_terme exemple3 *)
+(* let norm3 = faiblement_normalisable exemple3 *)

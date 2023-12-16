@@ -67,10 +67,10 @@ let print_terme x =
                   Printf.printf ")(";
                   print_terme z;
                   Printf.printf ")";
-    | Lamb(Var c,App(y,z)) -> Printf.printf "λ%c." c;
+    | Lamb(Var c,App(y,z)) -> Printf.printf "?%c." c;
                               print_terme y;
                               print_terme z
-    | Lamb(Var c,y) -> Printf.printf "λ%c." c;
+    | Lamb(Var c,y) -> Printf.printf "?%c." c;
                        print_terme y
   in print_terme x;;
 
@@ -148,10 +148,14 @@ let rec faiblement_normalisable (x:terme) =
 
   parcours_backtracking x;;
   
-  
 
 
-  
+
+let rec iteree (n:int) (f:terme) (x:terme)  = match n with 
+|0 -> x;
+|p -> App( f , iteree (n-1) f x ) ;;
+
+let rec church (n:int) = Lamb( Var('x') , iteree n (V(Var('f'))) (V(Var('x'))));;
 
 
 

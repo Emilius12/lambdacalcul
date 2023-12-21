@@ -157,10 +157,13 @@ let rec iteree (n:int) (f:terme) (x:terme)  = match n with
 
 let rec church (n:int) = Lamb( Var('x') , iteree n (V(Var('f'))) (V(Var('x'))));;
 
+let rec church_to_int (x:terme) = 
+	let cpt = ref 0 in
+	while ( x != church (!cpt)) do cpt := !cpt + 1 done ;
+	!cpt;;
 
 
-
-
+church_to_int (church 10);;
 
 
 

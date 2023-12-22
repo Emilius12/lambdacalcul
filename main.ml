@@ -310,3 +310,4 @@ let rec derivation (jug:jugement) : arbre = match jug with
 (* exemple du cours *)
 let a1 = derivation (Hashtbl.create 17, (Lamb((Var 'f',Func(A 2,Func(A 1,A 3))),Lamb((Var 'x',A 1),Lamb((Var 'y',A 2),App(App(V(Var 'f'),V(Var 'y')),V(Var 'x'))))),Func(Func(A 2,Func(A 1,A 3)),Func(A 1,Func(A 2,A 3)))))
 let _ = print_arbre a1
+

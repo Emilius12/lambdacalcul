@@ -192,7 +192,7 @@ type contexte = (preterme, typeV) Hashtbl.t
 
 type jugement = contexte * typage
 
-type regle = Var | App | Abs
+type regle = VAR | APP | ABS
 
 type arbre = Nil | N1 of jugement*regle*arbre | N2 of jugement*regle*arbre*arbre
 
@@ -271,9 +271,9 @@ let print_jug (jug:jugement) = match jug with
 
 
 let print_regle (r:regle) = match r with
-    | Var -> Printf.printf "VAR"
-    | App -> Printf.printf "APP"
-    | Abs -> Printf.printf "ABS"
+    | VAR -> Printf.printf "VAR"
+    | APP -> Printf.printf "APP"
+    | ABS -> Printf.printf "ABS"
 
 
 let rec print_arbre (a:arbre) = match a with
@@ -296,18 +296,100 @@ let rec print_arbre (a:arbre) = match a with
 let rec derivation (jug:jugement) : arbre = match jug with
 (* construction arbre de verification de type d'un typage *)
   | gamma, (V(Var c),alpha) -> if Hashtbl.find gamma (V(Var c)) = alpha then
-                                 N1(jug,Var,Nil)
+                                 N1(jug,VAR,Nil)
                                else raise (DerivationError "variable incompatible contexte")
   | gamma, (App(y,z),alpha) -> if Hashtbl.mem gamma z then
-                                 N2(jug, App, derivation (gamma,(y,Func(Hashtbl.find gamma z,alpha))), derivation (gamma,(z,Hashtbl.find gamma z)))
+                                 N2(jug, APP, derivation (gamma,(y,Func(Hashtbl.find gamma z,alpha))), derivation (gamma,(z,Hashtbl.find gamma z)))
                                else raise (DerivationError "Application impossible")
   | gamma, (Lamb((Var c,alpha1),y),Func(alpha2,tau)) when alpha1 = alpha2 -> let new_gamma = Hashtbl.copy gamma in
                                           Hashtbl.add new_gamma (V(Var c)) alpha1;
-                                          N1(jug, Abs, derivation (new_gamma,(y,tau)))
+                                          N1(jug, ABS, derivation (new_gamma,(y,tau)))
   | gamma, (Lamb((Var c,alpha1),y),_) -> raise (DerivationError "Abstraction incompatible par types")
 
 
 (* exemple du cours *)
-let a1 = derivation (Hashtbl.create 17, (Lamb((Var 'f',Func(A 2,Func(A 1,A 3))),Lamb((Var 'x',A 1),Lamb((Var 'y',A 2),App(App(V(Var 'f'),V(Var 'y')),V(Var 'x'))))),Func(Func(A 2,Func(A 1,A 3)),Func(A 1,Func(A 2,A 3)))))
-let _ = print_arbre a1
+(* let a1 = derivation (Hashtbl.create 17, (Lamb((Var 'f',Func(A 2,Func(A 1,A 3))),Lamb((Var 'x',A 1),Lamb((Var 'y',A 2),App(App(V(Var 'f'),V(Var 'y')),V(Var 'x'))))),Func(Func(A 2,Func(A 1,A 3)),Func(A 1,Func(A 2,A 3))))) *)
+(* let _ = print_arbre a1 *)
 
+
+
+(*(*(* Algorithme Hindley-Milner *)*)*)
+let rec desannot (x:preterme) : terme = match x with
+    | V(Var c) -> V(Var c)
+    | App(y,z) -> App(desannot y,desannot z)
+    | Lamb((Var c,_),y) -> Lamb(Var c,desannot y)
+
+
+let get_constraints (x:preterme) = (* recupere types associes aux variables et contraintes sur ces derniers *)
+  let cnt = ref (-1) in
+  let var = Hashtbl.create 17 in (* types frais variables *)
+  let const = Hashtbl.create 17 in (* contraintes *)
+  let rec build (x:terme) = match x with
+      | V(_) -> Hashtbl.find var x
+      | App(y,z) -> (* (match build y, build z with *)
+                    (*    | Func(alpha1,beta), alpha2 when alpha1 = alpha2 -> Hashtbl.add const (Hashtbl.find var y) (Func(alpha1,beta)); *)
+                    (*                                                        beta *)
+                    (*    | _ -> failwith "Incompatibilité de typage: application") *)
+                    incr cnt;
+                    let n = !cnt in
+                    Hashtbl.add const (build y) (Func(build z,A !cnt));
+                    A n
+      | Lamb(Var c,y) -> incr cnt;
+                         let n = !cnt in
+                         Hashtbl.add var (V(Var c)) (A n);
+                         Func(A n,build y)
+  in
+  let x' = desannot x in
+  let type_final = build x' in
+  incr cnt;
+  Hashtbl.add const (A !cnt) type_final;
+  x',var,const,A !cnt
+
+
+let rec type_is_in (t1:typeV) (t2:typeV) = match t1, t2 with (* type present dans un autre *)
+    | A n, A m -> n = m
+    | _, Func(t3,t4) -> type_is_in t1 t3 || type_is_in t1 t4
+    | _ -> false
+
+
+let resol_by_uni const type_final =
+  let subst = Hashtbl.create 17 in (* substitutions de types *)
+  let rec deduct h = (* remplit la table des substitutions a partir des contraintes *)
+    Printf.printf "Ok\n";
+    if Hashtbl.length h = 0 then ()
+    else (
+      Hashtbl.iter (fun zeta1 zeta2 -> (match zeta1,zeta2 with
+                                           | _, _ when zeta1 = zeta2 -> Hashtbl.remove h zeta1
+                                           | A n, _ when not (type_is_in zeta1 zeta2) -> Hashtbl.add subst zeta1 zeta2; Hashtbl.remove h zeta1
+                                           | _, A m when not (type_is_in zeta2 zeta1) -> Hashtbl.add subst zeta2 zeta1; Hashtbl.remove h zeta1
+                                           | Func(k1,x1), Func(k2,x2) -> Hashtbl.add h k1 k2;
+                                                                         Hashtbl.add h x1 x2;
+                                                                         Hashtbl.remove h zeta1
+                                           | _ -> failwith "incompatibilité de types")) h;
+      Hashtbl.iter (fun v s -> if Hashtbl.mem h v then Hashtbl.replace h v s) subst;
+      deduct h)
+  in
+  deduct const;
+  subst
+
+
+let rec reconstruct (x:terme) var subst : preterme = match x with
+    | V(Var c) -> V(Var c)
+    | App(y,z) -> App(reconstruct y var subst,reconstruct z var subst)
+    | Lamb(Var c,y) -> Lamb((Var c,Hashtbl.find subst (Hashtbl.find var (V(Var c)))),reconstruct y var subst)
+
+
+let hindley_milner (x:preterme) =
+  let x', var, const, type_final = get_constraints x in
+  let subst = resol_by_uni const type_final in
+  reconstruct x' var subst, Hashtbl.find subst type_final
+  (* type_final *)
+
+
+
+(* let a1 = Lamb((Var 'f',Func(A 2,Func(A 1,A 3))),Lamb((Var 'x',A 1),Lamb((Var 'y',A 2),App(App(V(Var 'f'),V(Var 'y')),V(Var 'x'))))) *)
+(* let t1 = hindley_milner a1 *)
+let a2 = Lamb((Var 'x',A 0),Lamb((Var 'y',A 1),V(Var 'x')))
+let a3 = Lamb((Var 'z',A 2),Lamb((Var 'u',A 3),V(Var 'z')))
+let a4 = App(a2,a3)
+let t2 = hindley_milner a2

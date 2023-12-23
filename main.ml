@@ -314,25 +314,36 @@ let rec derivation (jug:jugement) : arbre = match jug with
 
 
 (*(*(* Algorithme Hindley-Milner *)*)*)
-let rec desannot (x:preterme) : terme = match x with
+
+
+let rec desannot (x:preterme) : terme = match x with (* enleve les types dans les abstractions du lambda-CST *)
     | V(Var c) -> V(Var c)
     | App(y,z) -> App(desannot y,desannot z)
     | Lamb((Var c,_),y) -> Lamb(Var c,desannot y)
 
 
+let rec type_is_in (t1:typeV) (t2:typeV) = match t1, t2 with (* type present dans un autre *)
+    | A n, A m -> n = m
+    | _, Func(t3,t4) -> type_is_in t1 t3 || type_is_in t1 t4
+    | _ -> false
+
+
+let rec replace_type t1 t2 t3 = match t1,t2 with (* on remplace dans t1 le type variable t2 par t3 *)
+    | A n,A m when n = m -> t3
+    | A n,A m -> t1
+    | Func(t5,t6),_ -> Func (replace_type t5 t2 t3,replace_type t6 t2 t3)
+    | _ -> failwith "incompatibilite des types pour substitution"
+
+
 let get_constraints (x:preterme) = (* recupere types associes aux variables et contraintes sur ces derniers *)
-  let cnt = ref (-1) in
+  let cnt = ref (-1) in (* types pour les variables fraiches *)
   let var = Hashtbl.create 17 in (* types frais variables *)
   let const = Hashtbl.create 17 in (* contraintes *)
   let rec build (x:terme) = match x with
       | V(_) -> Hashtbl.find var x
-      | App(y,z) -> (* (match build y, build z with *)
-                    (*    | Func(alpha1,beta), alpha2 when alpha1 = alpha2 -> Hashtbl.add const (Hashtbl.find var y) (Func(alpha1,beta)); *)
-                    (*                                                        beta *)
-                    (*    | _ -> failwith "Incompatibilité de typage: application") *)
-                    incr cnt;
+      | App(y,z) -> incr cnt;
                     let n = !cnt in
-                    Hashtbl.add const (build y) (Func(build z,A !cnt));
+                    Hashtbl.add const (build y) (Func(build z,A n));
                     A n
       | Lamb(Var c,y) -> incr cnt;
                          let n = !cnt in
@@ -342,54 +353,52 @@ let get_constraints (x:preterme) = (* recupere types associes aux variables et c
   let x' = desannot x in
   let type_final = build x' in
   incr cnt;
-  Hashtbl.add const (A !cnt) type_final;
+  Hashtbl.add const (A !cnt) type_final; (* on rajoute le type final pour la substitution finale plus tard *)
   x',var,const,A !cnt
 
 
-let rec type_is_in (t1:typeV) (t2:typeV) = match t1, t2 with (* type present dans un autre *)
-    | A n, A m -> n = m
-    | _, Func(t3,t4) -> type_is_in t1 t3 || type_is_in t1 t4
-    | _ -> false
-
-
-let resol_by_uni const type_final =
+let resol_by_uni const type_final = (* deuxieme etape algo: unification des contraintes *)
   let subst = Hashtbl.create 17 in (* substitutions de types *)
   let rec deduct h = (* remplit la table des substitutions a partir des contraintes *)
-    Printf.printf "Ok\n";
+    Hashtbl.iter (fun v s -> if Hashtbl.mem h v then Hashtbl.replace h v s) subst; (* substitution dans les contraintes *)
     if Hashtbl.length h = 0 then ()
-    else (
-      Hashtbl.iter (fun zeta1 zeta2 -> (match zeta1,zeta2 with
-                                           | _, _ when zeta1 = zeta2 -> Hashtbl.remove h zeta1
-                                           | A n, _ when not (type_is_in zeta1 zeta2) -> Hashtbl.add subst zeta1 zeta2; Hashtbl.remove h zeta1
-                                           | _, A m when not (type_is_in zeta2 zeta1) -> Hashtbl.add subst zeta2 zeta1; Hashtbl.remove h zeta1
-                                           | Func(k1,x1), Func(k2,x2) -> Hashtbl.add h k1 k2;
-                                                                         Hashtbl.add h x1 x2;
-                                                                         Hashtbl.remove h zeta1
-                                           | _ -> failwith "incompatibilité de types")) h;
-      Hashtbl.iter (fun v s -> if Hashtbl.mem h v then Hashtbl.replace h v s) subst;
+    else(
+      Hashtbl.iter (fun zeta1 zeta2 -> Hashtbl.remove h zeta1; (* on enleve la contrainte actuelle *)
+                                       (match zeta1,zeta2 with
+                                        | _, _ when zeta1 = zeta2 -> ()
+                                        | A n, _ when not (type_is_in zeta1 zeta2) -> Hashtbl.add subst zeta1 zeta2
+                                        | _, A m when not (type_is_in zeta2 zeta1) -> Hashtbl.add subst zeta2 zeta1
+                                        | Func(k1,x1), Func(k2,x2) -> Hashtbl.add h k1 k2;
+                                                                      Hashtbl.add h x1 x2;
+                                        | _ -> failwith "incompatibilité de types")) h;
       deduct h)
   in
   deduct const;
   subst
 
 
-let rec reconstruct (x:terme) var subst : preterme = match x with
+let rec reconstruct (x:terme) (var:(terme,typeV) Hashtbl.t) subst : preterme = match x with (* reconstruction d'un typage en lambda-cst *)
     | V(Var c) -> V(Var c)
     | App(y,z) -> App(reconstruct y var subst,reconstruct z var subst)
-    | Lamb(Var c,y) -> Lamb((Var c,Hashtbl.find subst (Hashtbl.find var (V(Var c)))),reconstruct y var subst)
+    | Lamb(Var c,y) -> Lamb((Var c,if Hashtbl.mem subst (Hashtbl.find var (V(Var c))) then Hashtbl.find subst (Hashtbl.find var (V(Var c))) else Hashtbl.find var (V(Var c))),reconstruct y var subst)
 
 
 let hindley_milner (x:preterme) =
   let x', var, const, type_final = get_constraints x in
   let subst = resol_by_uni const type_final in
+  Hashtbl.iter (fun t1 t2 -> (Hashtbl.iter (fun t3 t4 -> if (t1 != t3 || t2 != t4) && type_is_in t1 t4 then (
+                                                           Hashtbl.replace subst t3 (replace_type t4 t1 t2);
+                                                           Hashtbl.remove subst t1)) subst)) subst;
   reconstruct x' var subst, Hashtbl.find subst type_final
-  (* type_final *)
 
 
+
+
+(* Exemples du cours *)
 
 (* let a1 = Lamb((Var 'f',Func(A 2,Func(A 1,A 3))),Lamb((Var 'x',A 1),Lamb((Var 'y',A 2),App(App(V(Var 'f'),V(Var 'y')),V(Var 'x'))))) *)
 (* let t1 = hindley_milner a1 *)
-let a2 = Lamb((Var 'x',A 0),Lamb((Var 'y',A 1),V(Var 'x')))
-let a3 = Lamb((Var 'z',A 2),Lamb((Var 'u',A 3),V(Var 'z')))
-let a4 = App(a2,a3)
-let t2 = hindley_milner a2
+(* let a2 = Lamb((Var 'x',A 0),Lamb((Var 'y',A 1),V(Var 'x'))) *)
+(* let a3 = Lamb((Var 'z',A 2),Lamb((Var 'u',A 3),V(Var 'z'))) *)
+(* let a4 = App(a2,a3) *)
+(* let t2 = hindley_milner a4 *)

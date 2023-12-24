@@ -163,7 +163,9 @@ let rec church_to_int (x:terme) =
 	!cpt;;
 
 
-church_to_int (church 10);;
+let rec succ (x:terme)  = match x with
+|church n -> church (n+1);
+|_ -> failwith "pas un entier de church";;	
 
 
 
